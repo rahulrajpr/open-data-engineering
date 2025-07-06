@@ -1,16 +1,15 @@
-version: '3.9'
+version: "3.8"
 
 services:
-
   postgres:
     image: postgres:15
     container_name: postgres
+    ports:
+      - "${POSTGRES_PORT}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -26,12 +25,12 @@ services:
     image: minio/minio
     container_name: minio
     command: server /data --console-address ":${MINIO_CONSOLE_PORT}"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
       - "${MINIO_PORT}:9000"
       - "${MINIO_CONSOLE_PORT}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
 
@@ -41,7 +40,6 @@ services:
     ports:
       - "${TRINO_PORT}:8080"
     depends_on:
-      - minio
       - postgres
 
   spark:
@@ -50,19 +48,36 @@ services:
     environment:
       - SPARK_MODE=master
     ports:
-      - "${SPARK_PORT}:4040"
+      - "${SPARK_PORT}:8080"
+    volumes:
+      - ./spark:/bitnami/spark
 
   superset:
     image: apache/superset
     container_name: superset
+    ports:
+      - "${SUPERSET_PORT}:8088"
     environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
       SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL}
-    ports:
-      - "${SUPERSET_PORT}:8088"
+    volumes:
+      - ./config/superset_config.py:/app/pythonpath/superset_config.py
     depends_on:
       - postgres
+
+  airbyte-db:
+    image: postgres:13
+    container_name: airbyte-db
+    ports:
+      - "${AIRBYTE_DB_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${AIRBYTE_DB_USER}
+      POSTGRES_PASSWORD: ${AIRBYTE_DB_PASSWORD}
+      POSTGRES_DB: ${AIRBYTE_DB_NAME}
+    volumes:
+      - airbyte_db_data:/var/lib/postgresql/data
 
   airbyte-server:
     image: airbyte/server:${AIRBYTE_VERSION}
@@ -83,75 +98,94 @@ services:
       - airbyte-server
       - airbyte-db
 
-  airbyte-db:
-    image: postgres:13
-    container_name: airbyte-db
-    environment:
-      POSTGRES_USER: ${AIRBYTE_DB_USER}
-      POSTGRES_PASSWORD: ${AIRBYTE_DB_PASSWORD}
-      POSTGRES_DB: ${AIRBYTE_DB_NAME}
-    volumes:
-      - airbyte_db_data:/var/lib/postgresql/data
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "${REDIS_PORT}:6379"
 
-  airflow:
+  airflow-webserver:
     image: apache/airflow:2.8.1-python3.10
-    container_name: airflow
-    environment:
-      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
+    container_name: airflow-webserver
+    command: webserver
     ports:
       - "${AIRFLOW_PORT}:8080"
-    depends_on:
-      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:${REDIS_PORT}/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD}
+      _AIRFLOW_WWW_USER_EMAIL: ${AIRFLOW_EMAIL}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
-
-  druid:
-    image: apache/druid:27.0.0
-    container_name: druid
-    ports:
-      - "${DRUID_PORT}:8888"
-    environment:
-      - DRUID_XMX=2g
-      - DRUID_XMS=2g
-      - DRUID_MAXNEWSIZE=256m
-    command: bin/start-micro-quickstart
-    volumes:
-      - druid_data:/opt/druid/var
-
-  ranger-admin:
-    image: apache/ranger:2.6.0
-    container_name: ranger-admin
-    environment:
-      - DB_FLAVOR=MYSQL
-      - SQL_CONNECTOR_JAR=/usr/share/java/mysql-connector-java.jar
-      - RANGER_ADMIN_PASSWORD=${RANGER_ADMIN_PASSWORD}
-      - RANGER_DB_ROOT_USER=${RANGER_DB_ROOT_USER}
-      - RANGER_DB_ROOT_PASSWORD=${RANGER_DB_ROOT_PASSWORD}
-      - RANGER_DB_USER=${RANGER_DB_USER}
-      - RANGER_DB_PASSWORD=${RANGER_DB_PASSWORD}
-      - MYSQL_HOST=ranger-mysql
     depends_on:
-      - ranger-mysql
-    ports:
-      - "${RANGER_PORT}:6080"
+      - postgres
+      - redis
 
-  ranger-mysql:
-    image: mysql:8
-    container_name: ranger-mysql
+  airflow-scheduler:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: airflow-scheduler
+    command: scheduler
     environment:
-      - MYSQL_ROOT_PASSWORD=${RANGER_DB_ROOT_PASSWORD}
-      - MYSQL_DATABASE=ranger
-      - MYSQL_USER=${RANGER_DB_USER}
-      - MYSQL_PASSWORD=${RANGER_DB_PASSWORD}
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:${REDIS_PORT}/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
     volumes:
-      - ranger_mysql_data:/var/lib/mysql
+      - ./airflow/dags:/opt/airflow/dags
+    depends_on:
+      - postgres
+      - redis
+
+  airflow-worker:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: airflow-worker
+    command: celery worker
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:${REDIS_PORT}/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    depends_on:
+      - postgres
+      - redis
+
+  airflow-triggerer:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: airflow-triggerer
+    command: triggerer
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:${REDIS_PORT}/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    depends_on:
+      - postgres
+      - redis
+
+  airflow-flower:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: airflow-flower
+    command: celery flower
+    ports:
+      - "5555:5555"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:${REDIS_PORT}/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+    depends_on:
+      - postgres
+      - redis
 
 volumes:
   pgdata:
   mongodb_data:
   minio_data:
   airbyte_db_data:
-  druid_data:
-  ranger_mysql_data:

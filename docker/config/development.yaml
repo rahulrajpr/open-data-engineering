@@ -1,0 +1,5 @@
+dynamicconfig.client:
+  - client: "*"
+    config:
+      frontend.enableUpdateWorkflowSearchAttributes: true
+      frontend.enableReadFromSecondaryVisibility: false

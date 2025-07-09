@@ -1,0 +1,26 @@
+global:
+  edition: community
+
+database:
+  host: host.docker.internal
+  port: 5434
+  username: admin
+  password: admin123
+  database: opende
+  ssl: false
+
+worker:
+  replicas: 2
+
+webapp:
+  ingress:
+    enabled: false
+
+temporal:
+  enabled: true
+
+keycloak:
+  enabled: false
+
+monitoring:
+  enabled: false

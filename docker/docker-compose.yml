@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   postgres:
     image: postgres:15
@@ -151,9 +150,107 @@ services:
       - postgres
       - redis
 
+  druid-zookeeper:
+    image: zookeeper:3.7
+    container_name: druid-zookeeper
+    ports:
+    - "${DRUID_ZK_PORT}:2181"
+
+  druid-postgres:
+    image: postgres:13
+    container_name: druid-postgres
+    environment:
+      POSTGRES_DB: druid
+      POSTGRES_USER: druid
+      POSTGRES_PASSWORD: druid
+    ports:
+      - "${DRUID_POSTGRES_PORT}:5432"
+    volumes:
+      - druid_postgres_data:/var/lib/postgresql/data
+
+  druid-coordinator:
+    image: imply/druid:2023.09.0
+    container_name: druid-coordinator
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+    ports:
+      - "${DRUID_COORDINATOR_PORT}:8081"
+    environment:
+      - DRUID_NODE_TYPE=coordinator
+    volumes:
+      - ./druid/common.runtime.properties:/opt/druid/conf/druid/cluster/_common/common.runtime.properties
+
+  druid-overlord:
+    image: imply/druid:2023.09.0
+    container_name: druid-overlord
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+    ports:
+      - "${DRUID_OVERLORD_PORT}:8090"
+    environment:
+      - DRUID_NODE_TYPE=overlord
+    volumes:
+      - ./druid/common.runtime.properties:/opt/druid/conf/druid/cluster/_common/common.runtime.properties
+
+  druid-broker:
+    image: imply/druid:2023.09.0
+    container_name: druid-broker
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+    ports:
+      - "${DRUID_BROKER_PORT}:8082"
+    environment:
+      - DRUID_NODE_TYPE=broker
+    volumes:
+      - ./druid/common.runtime.properties:/opt/druid/conf/druid/cluster/_common/common.runtime.properties
+
+  druid-historical:
+    image: imply/druid:2023.09.0
+    container_name: druid-historical
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+    ports:
+      - "${DRUID_HISTORICAL_PORT}:8083"
+    environment:
+      - DRUID_NODE_TYPE=historical
+    volumes:
+      - ./druid/common.runtime.properties:/opt/druid/conf/druid/cluster/_common/common.runtime.properties
+
+  druid-middlemanager:
+    image: imply/druid:2023.09.0
+    container_name: druid-middlemanager
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+    ports:
+      - "${DRUID_MIDDLEMANAGER_PORT}:8091"
+    environment:
+      - DRUID_NODE_TYPE=middleManager
+    volumes:
+      - ./druid/common.runtime.properties:/opt/druid/conf/druid/cluster/_common/common.runtime.properties
+
+  druid-router:
+    image: imply/druid:2023.09.0
+    container_name: druid-router
+    depends_on:
+      - druid-broker
+      - druid-coordinator
+    ports:
+      - "${DRUID_ROUTER_PORT}:8888"
+    environment:
+      - DRUID_NODE_TYPE=router
+    volumes:
+      - ./druid/common.runtime.properties:/opt/druid/conf/druid/cluster/_common/common.runtime.properties
+
+
 volumes:
   pgdata:
   mongodb_data:
   minio_data:
   airbyte_db_data:
   airbyte_temporal_data:
+  druid_postgres_data:

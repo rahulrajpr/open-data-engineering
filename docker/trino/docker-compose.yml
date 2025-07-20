@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  trino_postgres:
+    image: ${TRINO_POSTGRES_IMAGE}
+    container_name: ${TRINO_POSTGRES_CONTAINER}
+    environment:
+      POSTGRES_USER: ${TRINO_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${TRINO_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${TRINO_POSTGRES_DB}
+    ports:
+      - "${TRINO_POSTGRES_PORT}:5432"
+    volumes:
+      - trino_pgdata:/var/lib/postgresql/data
+
+  trino:
+    image: ${TRINO_IMAGE}
+    container_name: ${TRINO_CONTAINER}
+    ports:
+      - "${TRINO_PORT}:8080"
+    depends_on:
+      - trino_postgres
+    environment:
+      - _JAVA_OPTIONS=-Xmx1G -Xms512M
+
+volumes:
+  trino_pgdata:
